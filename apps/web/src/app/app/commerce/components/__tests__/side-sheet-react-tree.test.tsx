@@ -81,6 +81,19 @@ describe("P263 R4-2: a click inside the sheet does not reach an ancestor's onCli
     expect(inner).toHaveBeenCalledTimes(1);
     expect(ancestor, "the click bubbled out of the sheet").not.toHaveBeenCalled();
   });
+  it("R6-9: a button in the footer (its own portal since P274-2): the ancestor's handler is not called", async () => {
+    const ancestor = vi.fn();
+    const save = vi.fn();
+    render(
+      <div onClick={ancestor}>
+        <SideSheet open onClose={() => {}} title="Edit Expense" footer={<button onClick={save}>Save</button>}><p>body</p></SideSheet>
+      </div>,
+    );
+    await wait(30);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(ancestor, "the footer's click bubbled out of the sheet").not.toHaveBeenCalled();
+  });
   it("control: a click on the header's Close does not reach the ancestor either", async () => {
     const ancestor = vi.fn();
     render(<div onClick={ancestor}><SideSheet open onClose={() => {}} title="Edit Expense"><p>body</p></SideSheet></div>);

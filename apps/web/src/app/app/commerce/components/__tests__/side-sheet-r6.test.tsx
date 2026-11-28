@@ -15,7 +15,7 @@
  * The blur Chromium fires on a removed focused node is reproduced as in side-sheet-p274.test.tsx (jsdom fires none).
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Component, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() }) }));
@@ -257,5 +257,108 @@ describe("R6-5: an Escape a layer inside the sheet handled does not close the sh
     expect(onClose, "the Escape that closed the list closed the sheet too").not.toHaveBeenCalled();
     fireEvent.keyDown(box, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("R6-2 (mutation Q1): a focused field outside the sheet that the flip's commit removes", () => {
+  it("focus is not pulled into the sheet", async () => {
+    function Page() {
+      const isMobile = useIsMobile();
+      return (
+        <>
+          {!isMobile && <input aria-label="Page search" />}
+          <SideSheet open onClose={() => {}} title="Edit Expense"><input aria-label="Field" /></SideSheet>
+        </>
+      );
+    }
+    render(<Page />);
+    await settle();
+    act(() => { screen.getByLabelText("Page search").focus(); });
+    await flip(true);
+    expect(screen.queryByLabelText("Page search")).toBeNull();
+    expect(screen.getByRole("dialog").contains(document.activeElement), "focus outside the sheet was pulled into it").toBe(false);
+  });
+});
+
+describe("R6-3 (mutation Q18): a focused footer control the flip's commit removes", () => {
+  it("is not stood in for by the header's Close: the panel takes focus", async () => {
+    function Footer() {
+      const isMobile = useIsMobile();
+      return isMobile ? <span>phone footer</span> : <button aria-label="Close" data-footer="" />;
+    }
+    render(<SideSheet open onClose={() => {}} title="Edit Expense" footer={<Footer />}><p>body</p></SideSheet>);
+    await settle();
+    act(() => { (document.querySelector("button[data-footer]") as HTMLElement).focus(); });
+    await flip(true);
+    expect(document.activeElement, "the header's Close stood in for a footer control").toBe(screen.getByRole("dialog"));
+  });
+});
+
+describe("R6-5 (mutation Q10): ContactSelect's Escape for its open list stops there", () => {
+  it("an ancestor's own Escape handler (a React onKeyDown) is not reached while the list is open", async () => {
+    const ancestor = vi.fn();
+    render(
+      <SideSheet open onClose={() => {}} title="New Schedule">
+        <div onKeyDown={(e) => { if (e.key === "Escape") ancestor(); }}>
+          <ContactSelect value="" onChange={() => {}} contacts={[{ id: "c1", firstName: "Ana", lastName: "Lee", email: "ana@example.test" }]} />
+        </div>
+      </SideSheet>,
+    );
+    await settle();
+    const box = screen.getByRole("combobox");
+    act(() => { box.focus(); });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    await settle();
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(ancestor, "the list's Escape reached the ancestor").not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(ancestor, "control: with the list closed the Escape goes on").toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("R6-10: a flip commit that a child's error ends leaves no swallowing behind", () => {
+  class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+    state = { failed: false };
+    static getDerivedStateFromError() { return { failed: true }; }
+    componentDidCatch() {}
+    render() { return this.state.failed ? <p>failed</p> : this.props.children; }
+  }
+  function ThrowsOnPhone() {
+    const isMobile = useIsMobile();
+    useLayoutEffect(() => { if (isMobile) throw new Error("child layout effect failed on the phone layout"); }, [isMobile]);
+    return null;
+  }
+  it("the sheet goes with the boundary's fallback: a blur on the field it had focused is heard, and every window listener it added is removed", async () => {
+    const added: Array<[string, unknown]> = [];
+    const removed: Array<[string, unknown]> = [];
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    const spyAdd = vi.spyOn(window, "addEventListener").mockImplementation((t: string, l: EventListenerOrEventListenerObject, o?: boolean | AddEventListenerOptions) => { added.push([t, l]); add(t, l, o); });
+    const spyRemove = vi.spyOn(window, "removeEventListener").mockImplementation((t: string, l: EventListenerOrEventListenerObject, o?: boolean | EventListenerOptions) => { removed.push([t, l]); remove(t, l, o); });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let blurs = 0;
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    function Field() {
+      const ref = useRef<HTMLInputElement>(null);
+      useNativeBlurs(ref, () => { blurs++; });
+      return <input ref={ref} aria-label="Field" />;
+    }
+    try {
+      render(<Boundary><SideSheet open onClose={() => {}} title="Edit Expense"><Field /><ThrowsOnPhone /></SideSheet></Boundary>);
+      await settle();
+      act(() => { screen.getByLabelText("Field").focus(); });
+      await flip(true);
+      expect(screen.getByText("failed")).toBeTruthy();
+      const leaked = added.filter(([t, l]) => (t === "blur" || t === "focusout") && !removed.some(([rt, rl]) => rt === t && rl === l));
+      expect(leaked, "a window listener that swallows blur outlived the sheet").toEqual([]);
+      const heard = blurs;
+      outside.dispatchEvent(new FocusEvent("blur"));
+      expect(blurs).toBe(heard);
+    } finally {
+      outside.remove();
+      spyAdd.mockRestore();
+      spyRemove.mockRestore();
+    }
   });
 });
