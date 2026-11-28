@@ -1,8 +1,8 @@
 diff --git a/dist/client/components/use-action-queue.js b/dist/client/components/use-action-queue.js
-index 6950553c42839a41e87f1d4cb32e7e028f114d13..7822a6919ebf5f1bc51ee50c3598632c7c78f109 100644
+index 321f496..2dc23b3 100644
 --- a/dist/client/components/use-action-queue.js
 +++ b/dist/client/components/use-action-queue.js
-@@ -106,37 +106,26 @@ function useActionQueue(actionQueue) {
+@@ -98,37 +98,26 @@ function useActionQueue(actionQueue) {
      if (typeof window !== 'undefined') {
          dispatch = nextDispatch;
      }
@@ -58,10 +58,10 @@ index 6950553c42839a41e87f1d4cb32e7e028f114d13..7822a6919ebf5f1bc51ee50c3598632c
  
  if ((typeof exports.default === 'function' || (typeof exports.default === 'object' && exports.default !== null)) && typeof exports.default.__esModule === 'undefined') {
 diff --git a/dist/esm/client/components/use-action-queue.js b/dist/esm/client/components/use-action-queue.js
-index 05ce1854311437bafb4b25b6dbe0b9ea967757a5..d1a8e804910e8be7949ece2ecff9b67680149e11 100644
+index 3a71128..426c745 100644
 --- a/dist/esm/client/components/use-action-queue.js
 +++ b/dist/esm/client/components/use-action-queue.js
-@@ -80,37 +80,26 @@ export function useActionQueue(actionQueue) {
+@@ -72,37 +72,26 @@ export function useActionQueue(actionQueue) {
      if (typeof window !== 'undefined') {
          dispatch = nextDispatch;
      }
@@ -116,3 +116,4 @@ index 05ce1854311437bafb4b25b6dbe0b9ea967757a5..d1a8e804910e8be7949ece2ecff9b676
  }
  
  //# sourceMappingURL=use-action-queue.js.map
+\ No newline at end of file
