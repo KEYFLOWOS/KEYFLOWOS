@@ -25,6 +25,8 @@ interface AiRecommendationCardProps {
   targetModule?: string;
   severity?: number;
   onAction?: () => void;
+  /** The action is in progress: its button is disabled and aria-busy (P237 R3-10). */
+  actionBusy?: boolean;
   onDismiss?: () => void;
   className?: string;
 }
@@ -86,6 +88,7 @@ export function AiRecommendationCard({
   targetModule,
   severity,
   onAction,
+  actionBusy = false,
   onDismiss,
   className = "",
 }: AiRecommendationCardProps) {
@@ -181,7 +184,9 @@ export function AiRecommendationCard({
             {actionLabel && onAction && (
               <button
                 onClick={onAction}
-                className="flex items-center gap-1 kf-text-micro font-medium transition-colors"
+                disabled={actionBusy}
+                aria-busy={actionBusy || undefined}
+                className="flex items-center gap-1 kf-text-micro font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: "hsl(var(--kf-accent1))" }}
               >
                 {actionLabel}

@@ -51,13 +51,17 @@ type Props = {
 
   onConfigChange: (section: string, updates: Record<string, unknown>) => void;
   onSaveConfig: () => Promise<void>;
-  /** P237: apply a change and save the config with it in (a save in the same tick would send the config before it). */
-  onConfigChangeAndSave: (section: string, updates: Record<string, unknown>) => Promise<void>;
+  /**
+   * P237 R3: a store status change as one unit (the config save and the store-enabled write); nothing is shown until
+   * both succeed, a failure leaves things as they were, and it never rejects.
+   */
+  onStoreStatusChange: (status: StoreStatus) => Promise<void>;
+  /** P237 R3: a store status change is in flight. */
+  statusSaving: boolean;
   configSaving: boolean;
   onHoursChange: (hours: BusinessHoursMap) => void;
   onSaveHours: () => Promise<void>;
   hoursSaving: boolean;
-  onToggleStoreEnabled: () => void;
   commerceProducts?: Product[];
 };
 
@@ -70,9 +74,12 @@ const STATUS_OPTIONS: { key: StoreStatus; label: string; description: string; ic
 function StoreStatusControl({
   storeStatus,
   onStatusChange,
+  busy = false,
 }: {
   storeStatus: StoreStatus;
   onStatusChange: (s: StoreStatus) => void;
+  /** P237 R3-4: a status save is in flight: the choices wait for it. */
+  busy?: boolean;
 }) {
   return (
     <div className="space-y-2 pt-2">
@@ -83,7 +90,9 @@ function StoreStatusControl({
           <button
             key={s.key}
             onClick={() => onStatusChange(s.key)}
-            className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all min-h-[44px]"
+            disabled={busy}
+            aria-busy={busy || undefined}
+            className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               background: isSelected ? `${s.color}14` : "hsl(var(--kf-muted)/0.04)",
               border: `1px solid ${isSelected ? `${s.color}36` : "hsl(var(--kf-border)/0.25)"}`,
@@ -498,12 +507,12 @@ export function OperationsMode({
   storefrontConfig,
   onConfigChange,
   onSaveConfig,
-  onConfigChangeAndSave,
+  onStoreStatusChange,
+  statusSaving,
   configSaving,
   onHoursChange,
   onSaveHours,
   hoursSaving,
-  onToggleStoreEnabled,
   commerceProducts,
 }: Props) {
   const primaryColor = "hsl(var(--kf-accent1))";
@@ -519,16 +528,14 @@ export function OperationsMode({
   const hoursActive = Object.values(businessHours).filter((h) => (h as Record<string, unknown>)?.enabled).length;
   const hasContact = !!(contactOptions.whatsappNumber || contactOptions.email || contactOptions.phone);
 
+  // P237 R3: the status controls wait for any config save, not only a status save: every config save writes the whole
+  // config, so a status save started during another would race it. "Saving..." is said for a status save only.
+  const statusBusy = statusSaving || configSaving;
   function handleStatusChange(newStatus: StoreStatus) {
-    // P280: one status save at a time; a press while one is in flight does nothing (the toggle is disabled too).
-    if (configSaving) return;
-    if (newStatus === "active" && !storeEnabled) {
-      onToggleStoreEnabled();
-    } else if (newStatus !== "active" && storeEnabled) {
-      onToggleStoreEnabled();
-    }
-    // P237: the saved config carries the status just chosen (not this render's config, from before it).
-    void onConfigChangeAndSave("storeSettings", { storeStatus: newStatus });
+    // P237 R3: the config save and the store-enabled write are one unit in the hook, which also refuses a second status
+    // change while one is in flight (a ref, so even two presses before a render send one); it never rejects. Every
+    // control that calls this is disabled while statusBusy, so no guard is repeated here.
+    void onStoreStatusChange(newStatus);
   }
 
   const liveStatusLabel = STATUS_OPTIONS.find((s) => s.key === storeStatus)?.label ?? "Active";
@@ -564,8 +571,8 @@ export function OperationsMode({
     },
   ];
 
-  const aiRecs: { type: "action" | "insight" | "risk" | "opportunity"; priority: "high" | "medium" | "low"; title: string; description: string; actionLabel?: string; onAction?: () => void }[] = [];
-  if (!storeEnabled) aiRecs.push({ type: "risk", priority: "high", title: "Store is Offline", description: "Your storefront is not accepting orders. Toggle it to Active to start receiving customers.", actionLabel: "Go Live", onAction: () => handleStatusChange("active") });
+  const aiRecs: { type: "action" | "insight" | "risk" | "opportunity"; priority: "high" | "medium" | "low"; title: string; description: string; actionLabel?: string; onAction?: () => void; actionBusy?: boolean }[] = [];
+  if (!storeEnabled) aiRecs.push({ type: "risk", priority: "high", title: "Store is Offline", description: "Your storefront is not accepting orders. Toggle it to Active to start receiving customers.", actionLabel: "Go Live", onAction: () => handleStatusChange("active"), actionBusy: statusBusy });
   if (deliveryOptions.length === 0) aiRecs.push({ type: "action", priority: "high", title: "No Delivery Methods", description: "Customers can't complete purchases without a delivery method. Add shipping, pickup, or digital delivery." });
   if (!hasContact) aiRecs.push({ type: "insight", priority: "medium", title: "No Contact Info", description: "Add WhatsApp, email, or phone so customers can reach you. This builds trust and reduces abandoned carts." });
   if (hoursActive === 0) aiRecs.push({ type: "opportunity", priority: "medium", title: "Set Business Hours", description: "Let customers know when you're available. Stores with hours configured receive more bookings." });
@@ -602,8 +609,8 @@ export function OperationsMode({
         </div>
         <button
           onClick={() => handleStatusChange(storeStatus === "active" ? "paused" : "active")}
-          disabled={configSaving}
-          aria-busy={configSaving || undefined}
+          disabled={statusBusy}
+          aria-busy={statusBusy || undefined}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold min-h-[40px] transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
             background: storeStatus === "active" ? "hsl(var(--kf-warning)/0.15)" : "hsl(var(--kf-success)/0.15)",
@@ -611,7 +618,7 @@ export function OperationsMode({
             border: `1px solid ${storeStatus === "active" ? "hsl(var(--kf-warning)/0.3)" : "hsl(var(--kf-success)/0.3)"}`,
           }}
         >
-          {storeStatus === "active" ? <><Pause className="w-3 h-3" /> Pause</> : <><Play className="w-3 h-3" /> Go Live</>}
+          {statusSaving ? "Saving…" : storeStatus === "active" ? <><Pause className="w-3 h-3" /> Pause</> : <><Play className="w-3 h-3" /> Go Live</>}
         </button>
       </motion.div>
 
@@ -631,6 +638,7 @@ export function OperationsMode({
               description={rec.description}
               actionLabel={rec.actionLabel}
               onAction={rec.onAction}
+              actionBusy={rec.actionBusy}
             />
           ))}
         </motion.div>
@@ -650,7 +658,7 @@ export function OperationsMode({
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}>
         <AccordionGroup title="Store Operations" brandColor="hsl(var(--kf-accent1))">
           <AccordionSection title="Store Status" subtitle="How your storefront appears to customers" icon={Power} accentColor={successColor} defaultOpen>
-            <StoreStatusControl storeStatus={storeStatus} onStatusChange={handleStatusChange} />
+            <StoreStatusControl storeStatus={storeStatus} onStatusChange={handleStatusChange} busy={statusBusy} />
           </AccordionSection>
 
           <AccordionSection title="Order Fulfillment" subtitle="View and manage customer orders" icon={Package} accentColor={primaryColor} defaultOpen>

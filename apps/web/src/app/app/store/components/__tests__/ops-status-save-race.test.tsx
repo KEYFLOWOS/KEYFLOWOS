@@ -81,13 +81,10 @@ function Operations() {
       onSaveConfig={s.handleSaveConfig}
       onStoreStatusChange={s.handleStoreStatusChange}
       statusSaving={s.statusSaving}
-      // RED only: the R2 component's prop, so the RED runs the R2 code path (removed in the R3 FIX)
-      {...({ onConfigChangeAndSave: (s as unknown as Record<string, unknown>).handleConfigChangeAndSave } as object)}
       configSaving={s.configSaving}
       onHoursChange={s.setBusinessHours}
       onSaveHours={s.handleSaveHours}
       hoursSaving={s.hoursSaving}
-      onToggleStoreEnabled={s.toggleStoreEnabled}
       commerceProducts={s.commerceProducts}
     />
   );
@@ -237,9 +234,9 @@ describe("P237 R2 (P280): the status toggle waits for the save in flight", () =>
     storeEnabled = false;
     client.fetchStorefrontConfig.mockImplementation(async () =>
       ok({ hero: {}, appearance: {}, merchandising: {}, promotions: {}, socialProof: {}, seo: {}, storeSettings: { storeStatus: "paused" } }));
-    // both writes held: the store stays offline, so the "Go Live" suggestion stays on screen
-    client.updateBusiness.mockImplementation(() => new Promise(() => {}));
-    client.updateStorefrontConfig.mockImplementation(() => new Promise(() => {}));
+    // the config save held: the store stays offline, so the "Go Live" suggestion stays on screen
+    let releaseConfig!: (v: unknown) => void;
+    client.updateStorefrontConfig.mockImplementation((_b: string, cfg: unknown) => new Promise((r) => { releaseConfig = () => r(ok(cfg)); }));
     render(<Operations />);
     const [statusCard] = await screen.findAllByRole("button", { name: "Go Live" });
     await act(async () => { fireEvent.click(statusCard); });
@@ -251,8 +248,13 @@ describe("P237 R2 (P280): the status toggle waits for the save in flight", () =>
     expect(suggestion!.getAttribute("aria-busy")).toBe("true");
     await act(async () => { fireEvent.click(suggestion!); });
     expect(client.updateStorefrontConfig, "the suggestion sent a second status save mid-flight").toHaveBeenCalledTimes(1);
-    // R3-7: and no second store-enabled write either (the guard comes before every write)
+    // R3-7: and no second store-enabled write either (the guard comes before every write): once the held config save
+    // answers, the press's one store-enabled write follows, and only that one
+    await act(async () => { releaseConfig(undefined); });
+    await waitFor(() => expect(client.updateBusiness).toHaveBeenCalled());
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
     expect(client.updateBusiness, "the suggestion sent a second store-enabled write mid-flight").toHaveBeenCalledTimes(1);
+    expect(client.updateStorefrontConfig).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -297,13 +299,15 @@ describe("P237 R3-1 / R3-2 / R3-6: a status press is one unit, and a failure lea
   it("the store-enabled write rejects: the same (config restored, nothing shown changes)", async () => {
     client.updateBusiness.mockRejectedValue(new Error("network down"));
     render(<Operations />);
-    await act(async () => { fireEvent.click(await statusToggle()); });
+    const toggle = await statusToggle(); // found outside act: act holds renders until it ends
+    await act(async () => { fireEvent.click(toggle); });
     await waitFor(() => expect(client.updateStorefrontConfig).toHaveBeenCalledTimes(2));
     expect(statusShown()).toBe("Store Status: Active");
   });
   it("control: both writes succeed: both are sent once, and the card then shows the new status", async () => {
     render(<Operations />);
-    await act(async () => { fireEvent.click(await statusToggle()); });
+    const toggle = await statusToggle(); // found outside act: act holds renders until it ends
+    await act(async () => { fireEvent.click(toggle); });
     await waitFor(() => expect(statusShown()).toBe("Store Status: Paused"));
     expect(client.updateStorefrontConfig).toHaveBeenCalledTimes(1);
     expect(client.updateBusiness).toHaveBeenCalledTimes(1);
@@ -325,7 +329,8 @@ describe("P237 R3-4 / R3-10: every status control waits for the status save", ()
   it("the Active / Paused / Coming Soon choices are disabled and aria-busy mid-save", async () => {
     client.updateStorefrontConfig.mockImplementation(() => new Promise(() => {}));
     render(<Operations />);
-    await act(async () => { fireEvent.click(await statusToggle()); });
+    const toggle = await statusToggle(); // found outside act: act holds renders until it ends
+    await act(async () => { fireEvent.click(toggle); });
     fireEvent.click(screen.getByRole("button", { name: /^Store Status/ })); // open the section holding the choices
     const choices = screen.getAllByRole("button").filter((b) => /^(Active|Paused|Coming Soon)/.test(b.textContent ?? ""));
     expect(choices.length, "the status choices are not on screen").toBe(3);

@@ -110,6 +110,10 @@ export function useStoreData() {
   // config is emptyStorefront, and what it hides from the store is not known).
   const [storefrontConfigRead, setStorefrontConfigRead] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  // P237 R3: a store status change in flight (the config save and the store-enabled write, one unit). The ref is the
+  // single-flight guard (two presses before a render send one); the state drives the controls' busy display.
+  const [statusSaving, setStatusSaving] = useState(false);
+  const statusSavingRef = useRef(false);
   const [landed, setLanded] = useState<Landed | null>(null);
 
   // Round 7 (SEC-R6-m1): the business whose store links were last backfilled. A business selected runs its own
@@ -166,6 +170,8 @@ export function useStoreData() {
     setSlugSaving(false);
     setHoursSaving(false);
     setConfigSaving(false);
+    setStatusSaving(false);
+    statusSavingRef.current = false;
     setSyncing(false);
     setLanded(null);
     setLoading(true);
@@ -644,12 +650,83 @@ export function useStoreData() {
    * P237: a change saved at once (Operations' store status). The save sends the config with the change in it:
    * handleSaveConfig called in the same tick sends this render's storefrontConfig, from before the change.
    */
-  function handleConfigChangeAndSave(section: string, updates: Record<string, unknown>) {
-    // R2-2: refused before anything changes, as handleReorderProducts is: a call made for a business no longer shown
-    // must not apply its change to the shown business's config either.
-    if (!businessId || !isCurrent(businessId) || refuse(canSaveStorefront, "storefront settings")) return Promise.resolve();
-    handleConfigChange(section, updates);
-    return saveConfig(withConfigChange(storefrontConfig, section, updates));
+  /** A config write's outcome, never a throw: a rejected request (a dropped connection) is a failure (P237 R3-1). */
+  async function writeConfig(forBusiness: string, config: StorefrontConfig): Promise<boolean> {
+    try {
+      const res = await updateStorefrontConfig(forBusiness, config);
+      return !res.error;
+    } catch {
+      return false;
+    }
+  }
+  /** The store-enabled write's outcome: the server's refusal, a rejected request, or null when it went through. */
+  async function writeStoreEnabled(forBusiness: string, enabled: boolean): Promise<string | null> {
+    try {
+      const res = await updateBusiness({ businessId: forBusiness, storeEnabled: enabled } as Parameters<typeof updateBusiness>[0]);
+      return res.error ? String(res.error) : null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "the request failed";
+    }
+  }
+
+  /**
+   * P237 R3: a store status change, one unit (Operations' toggle, its status choices and the Go Live suggestion).
+   * - Refused before anything is written or shown: a business no longer shown, a storefront not read (or one whose read
+   *   failed: what it holds is not known), a store whose details cannot be saved when its enabled state must change,
+   *   or a status change already in flight (the ref, so two presses before a render send one).
+   * - The config is saved with the new status (withConfigChange of this business's config), then, when the store's
+   *   enabled state must follow (Active publishes, any other status unpublishes), the store-enabled write.
+   * - Nothing is shown until both have succeeded. A failure of the config save (an error reply or a rejected request)
+   *   says so and leaves everything as it was; a failure of the store-enabled write puts the saved status back (the
+   *   config as it was) and says so. Either way the screen equals what is saved, and the busy state always ends.
+   */
+  async function handleStoreStatusChange(newStatus: string): Promise<void> {
+    if (statusSavingRef.current) return;
+    if (!businessId || !isCurrent(businessId) || refuse(canSaveStorefront, "storefront settings")) return;
+    const enable = newStatus === "active";
+    const enabledChanges = enable !== storeEnabled;
+    if (enabledChanges && refuse(canSaveBusiness, "details")) return;
+    const askedFor = businessId;
+    const before = storefrontConfig;
+    const next = withConfigChange(before, "storeSettings", { storeStatus: newStatus });
+    statusSavingRef.current = true;
+    setStatusSaving(true);
+    setConfigSaving(true);
+    try {
+      if (!(await writeConfig(askedFor, next))) {
+        if (isCurrent(askedFor)) toast.error("Failed to save storefront config");
+        return;
+      }
+      if (enabledChanges) {
+        const refused = await writeStoreEnabled(askedFor, enable);
+        if (refused !== null) {
+          const restored = await writeConfig(askedFor, before);
+          if (isCurrent(askedFor)) {
+            toast.error(
+              restored
+                ? `Failed to update store status: ${refused}`
+                : `Failed to update store status: ${refused}. The saved status could not be put back; refresh the page.`,
+            );
+          }
+          return;
+        }
+      }
+      if (!isCurrent(askedFor)) return;
+      setStorefrontConfig((prev) => withConfigChange(prev, "storeSettings", { storeStatus: newStatus }));
+      if (enabledChanges) {
+        setStoreEnabled(enable);
+        setBusinessData((prev) => (prev ? { ...prev, storeEnabled: enable } : prev));
+        emitEvent("store:status_changed", "store", { enabled: enable });
+      }
+      toast.success("Storefront saved!");
+      emitEvent("store:config_updated", "store", {});
+    } finally {
+      statusSavingRef.current = false;
+      if (isCurrent(askedFor)) {
+        setStatusSaving(false);
+        setConfigSaving(false);
+      }
+    }
   }
 
   function handleReorderProducts(orderedIds: string[]) {
@@ -689,15 +766,19 @@ export function useStoreData() {
     if (!isCurrent(businessId) || refuse(canSaveStorefront, "storefront settings")) return;
     const askedFor = businessId;
     setConfigSaving(true);
-    const res = await updateStorefrontConfig(askedFor, config);
-    if (!isCurrent(askedFor)) return;
-    if (res.error) {
-      toast.error("Failed to save storefront config");
-    } else {
-      toast.success("Storefront saved!");
-      emitEvent("store:config_updated", "store", {});
+    // P237 R3-1: a rejected request is a failure too, and the saving state always ends.
+    try {
+      const saved = await writeConfig(askedFor, config);
+      if (!isCurrent(askedFor)) return;
+      if (!saved) {
+        toast.error("Failed to save storefront config");
+      } else {
+        toast.success("Storefront saved!");
+        emitEvent("store:config_updated", "store", {});
+      }
+    } finally {
+      if (isCurrent(askedFor)) setConfigSaving(false);
     }
-    setConfigSaving(false);
   }
 
   const liveProductIds = new Set<string>();
@@ -754,7 +835,8 @@ export function useStoreData() {
     handleDeselectAll,
     handleConfigChange,
     handleSaveConfig,
-    handleConfigChangeAndSave,
+    handleStoreStatusChange,
+    statusSaving,
     handleDeleteServiceFromStore,
     handleReorderProducts,
     handleItemOverrideChange,

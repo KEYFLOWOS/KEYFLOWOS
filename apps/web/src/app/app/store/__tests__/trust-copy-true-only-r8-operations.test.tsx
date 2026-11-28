@@ -29,12 +29,12 @@ const ops = (faqEntries: unknown[]) =>
       storefrontConfig={{ faqEntries } as never}
       onConfigChange={vi.fn()}
       onSaveConfig={vi.fn(async () => undefined)}
-      onConfigChangeAndSave={vi.fn(async () => undefined)}
+      onStoreStatusChange={vi.fn(async () => undefined)}
+      statusSaving={false}
       configSaving={false}
       onHoursChange={vi.fn()}
       onSaveHours={vi.fn(async () => undefined)}
       hoursSaving={false}
-      onToggleStoreEnabled={vi.fn()}
     />,
   );
 

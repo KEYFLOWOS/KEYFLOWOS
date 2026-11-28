@@ -218,12 +218,12 @@ async function renderOperations(orders: ApiOrder[]) {
       storefrontConfig={{} as never}
       onConfigChange={vi.fn()}
       onSaveConfig={vi.fn(async () => undefined)}
-      onConfigChangeAndSave={vi.fn(async () => undefined)}
+      onStoreStatusChange={vi.fn(async () => undefined)}
+      statusSaving={false}
       configSaving={false}
       onHoursChange={vi.fn()}
       onSaveHours={vi.fn(async () => undefined)}
       hoursSaving={false}
-      onToggleStoreEnabled={vi.fn()}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: /Load Orders/i }));
