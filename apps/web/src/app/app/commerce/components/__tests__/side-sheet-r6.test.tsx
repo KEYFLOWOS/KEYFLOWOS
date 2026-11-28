@@ -362,3 +362,21 @@ describe("R6-10: a flip commit that a child's error ends leaves no swallowing be
     }
   });
 });
+
+describe("R6 (mutation Q21): the panel itself focused is not looked up as a shell control", () => {
+  it("a flip with the panel focused makes no query of the panel, and the new panel is focused", async () => {
+    render(
+      <SideSheet open onClose={() => {}} title="Edit Expense">
+        {Array.from({ length: 50 }, (_, i) => <div key={i}>row {i}</div>)}
+      </SideSheet>,
+    );
+    await settle();
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    const queries = vi.spyOn(Element.prototype, "querySelectorAll");
+    await flip(true);
+    const calls = queries.mock.calls.length;
+    queries.mockRestore();
+    expect(calls, "the flip searched the panel for a stand-in for the panel itself").toBe(0);
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+  });
+});
