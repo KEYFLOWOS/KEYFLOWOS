@@ -1,6 +1,8 @@
 "use client";
 
+import { useRef } from "react";
 import { Button } from "@keyflow/ui";
+import { useTopmostEscape } from "@/components/ui/overlay-stack";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -26,10 +28,13 @@ export function ConfirmDialog({
   variant = "default",
   busy = false,
 }: ConfirmDialogProps) {
+  // P263 R6-11: a layer over what opened it (a sheet, say): Escape cancels this dialog only
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useTopmostEscape(open, overlayRef, onCancel);
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-desc">
+    <div ref={overlayRef} className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-desc">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onCancel}

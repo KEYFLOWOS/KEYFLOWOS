@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+// P274-4, R6-11: Escape closes only the topmost layer (sheets and the dialogs opened over them)
+import { useTopmostEscape } from "@/components/ui/overlay-stack";
 
 /** No store to subscribe to: useSyncExternalStore here only tells the server render (and hydration) from the client. */
 const subscribeNothing = () => () => {};
@@ -41,35 +43,6 @@ function swallowFocusEvents(target: HTMLElement, types: readonly string[]): () =
 }
 const BLUR_EVENTS = ["blur", "focusout"] as const;
 const FOCUS_EVENTS = ["focus", "focusin"] as const;
-
-/**
- * P274-4: the overlays of the sheets that are open (SideSheet and QuickSheet). Escape closes only the topmost: the
- * last in document order, which is the one painted on top (a sheet opened inside another's children comes after it).
- */
-const openOverlays = new Set<HTMLElement>();
-function isTopmost(overlay: HTMLElement): boolean {
-  for (const other of openOverlays) {
-    if (other !== overlay && overlay.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) return false;
-  }
-  return true;
-}
-function useTopmostEscape(open: boolean, overlayRef: { current: HTMLElement | null }, close: () => void) {
-  useEffect(() => {
-    if (!open) return;
-    const overlay = overlayRef.current;
-    if (overlay) openOverlays.add(overlay);
-    const onKeyDown = (e: KeyboardEvent) => {
-      // R6-5: an Escape a layer inside the sheet already handled (it prevented the default, as Radix's layers and
-      // ContactSelect's list do) is not also the sheet's
-      if (e.key === "Escape" && !e.defaultPrevented && overlay && isTopmost(overlay)) close();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (overlay) openOverlays.delete(overlay);
-    };
-  }, [open, overlayRef, close]);
-}
 
 /**
  * Commit-phase hooks of an open sheet, rendered first in its overlay. `onOpen` runs when the overlay mounts, before
@@ -168,7 +141,7 @@ export function SideSheet({
       cancelAnimationFrame(frame);
       const back = previousFocusRef.current;
       previousFocusRef.current = null;
-      if (back?.isConnected) back.focus();
+      back?.focus();
       // R6-4: the opener is gone (or cannot take focus): nothing of the exiting sheet keeps focus, or keys, while it
       // animates out; focus goes to <body>
       const active = document.activeElement as HTMLElement | null;
@@ -207,12 +180,11 @@ export function SideSheet({
   const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false);
   /**
    * Set before the shell is swapped, with the old shell still in place: the node in the sheet that has focus, whether
-   * it is the panel itself or a control of the shell (not among the children or the footer), its caret, and the
+   * it is a control of the shell (not the panel itself, and not among the children or the footer), its caret, and the
    * release of the swallowing of its removal blur.
    */
   const movedRef = useRef<{
     last: HTMLElement;
-    wasPanel: boolean;
     inShell: boolean;
     selection: [number, number] | null;
     release: () => void;
@@ -224,8 +196,7 @@ export function SideSheet({
     if (!panel || !active || !panel.contains(active)) { movedRef.current = null; return; }
     movedRef.current = {
       last: active,
-      wasPanel: active === panel,
-      inShell: !content?.contains(active) && !footerContent?.contains(active),
+      inShell: active !== panel && !content?.contains(active) && !footerContent?.contains(active),
       selection: selectionOf(active),
       // released by the layout effect of this same commit (a commit is not interrupted between the two)
       release: swallowFocusEvents(active, BLUR_EVENTS),
@@ -242,7 +213,7 @@ export function SideSheet({
     movedRef.current = null;
     if (!moved) return;
     moved.release();
-    const { last, wasPanel, inShell, selection } = moved;
+    const { last, inShell, selection } = moved;
     const panel = panelRef.current;
     if (!open || !content || !panel) return;
     const active = document.activeElement;
@@ -251,13 +222,11 @@ export function SideSheet({
       if (content.contains(last) || footerContent?.contains(last)) {
         const releaseFocus = swallowFocusEvents(last, FOCUS_EVENTS);
         try { last.focus(); } finally { releaseFocus(); }
-      } else if (wasPanel) {
-        panel.focus();
       } else if (inShell && !last.isConnected) {
         shellCounterpart(last, panel, [content, footerContent])?.focus();
       }
-      // A control that cannot take focus now (disabled, or removed by its child) leaves focus on <body>: the panel
-      // takes it (P263 R1-4, R6-1).
+      // The panel itself had focus, or a control cannot take it now (disabled, or removed by its child), so focus is
+      // on <body>: the panel takes it (P263 R1-4, R6-1).
       if (!panel.contains(document.activeElement)) panel.focus();
     }
     if (document.activeElement !== last) {
@@ -279,6 +248,11 @@ export function SideSheet({
   }, [content, footerContent]);
   // P274-5: unmounted (under StrictMode's simulated unmount the slots' refs put them back on the remount)
   useEffect(() => detachContainers, [detachContainers]);
+  // R6-10: a swap whose own commit did not reach this sheet's layout effect leaves no swallowing behind on unmount
+  useEffect(() => () => {
+    movedRef.current?.release();
+    movedRef.current = null;
+  }, []);
 
   return (
     <AnimatePresence onExitComplete={detachContainers}>

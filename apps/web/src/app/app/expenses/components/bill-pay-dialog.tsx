@@ -20,6 +20,7 @@ import { payBill } from "@/lib/api/finance";
 import { toast } from "sonner";
 import { readState, refusalMessage } from "@/lib/failure-kit";
 import { canStartFor, formatCurrency, refusedStart, useShownBusiness } from "./expense-utils";
+import { isTopmostLayer, useOverlayLayer } from "@/components/ui/overlay-stack";
 
 const FOCUSABLE = "select:not([disabled]), button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
 
@@ -89,6 +90,10 @@ export function BillPayDialog({
   // only). Focus moves into the dialog on open and returns to what opened it on close; Tab and Shift+Tab stay
   // inside; Escape closes it, except while a pay is in flight, and never reaches the app's Escape shortcut.
   const formRef = useRef<HTMLFormElement>(null);
+  // P263 R6-11: Pay is a layer over the page (and over a sheet open on it): its Escape is its own while it is the
+  // topmost layer, and a sheet underneath does not also take it
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useOverlayLayer(true, overlayRef);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -100,6 +105,7 @@ export function BillPayDialog({
       const form = formRef.current;
       if (!form) return;
       if (e.key === "Escape") {
+        if (!isTopmostLayer(overlayRef.current)) return; // a layer opened over Pay has it
         // Pay's Escape stays in Pay: the app's own Escape shortcut (use-keyboard-shortcuts, on window) would also go
         // from this expense to the list, mid-pay included.
         e.stopPropagation();
@@ -204,7 +210,7 @@ export function BillPayDialog({
         : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="bill-pay-title">
+    <div ref={overlayRef} className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="bill-pay-title">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={busy ? undefined : onClose} aria-hidden="true" />
       <form
         ref={formRef}

@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
+import { useTopmostEscape } from "@/components/ui/overlay-stack";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -36,11 +37,15 @@ export function ConfirmDialog({
   children,
 }: ConfirmDialogProps) {
   const style = variantStyles[variant];
+  // P263 R6-11: a layer over what opened it (a sheet, say): Escape cancels this dialog only
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useTopmostEscape(open, overlayRef, onCancel);
 
   return (
     <AnimatePresence>
       {open && (
         <motion.div
+          ref={overlayRef}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
