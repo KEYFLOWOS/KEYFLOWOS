@@ -206,8 +206,6 @@ export const RECEIPT_UNAVAILABLE_NOTE = "This receipt can't be shown here";
 
 export const RECEIPT_STORED_NOTE = "Receipt stored — viewing isn't available yet";
 
-/** A full ISO 8601 date-time, the one other prefill form read as an instant (P267 R6-1). */
-const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
 /** A plain calendar date, as a date input holds one (P267 R3-1). */
 const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -219,6 +217,22 @@ function isCalendarDate(d: string): boolean {
   if (!PLAIN_DATE.test(d)) return false;
   const at = new Date(`${d}T00:00:00Z`);
   return !Number.isNaN(at.getTime()) && at.toISOString().slice(0, 10) === d;
+}
+
+/**
+ * P267 R7: the one strict reading of a date value (a prefill's date, a receipt's issueDate). Accepted, as the whole
+ * value: YYYY-MM-DD, optionally followed by Thh:mm, :ss and .sss (1-3 digits), and optionally a zone, Z or +-hh:mm.
+ * The date part must be a calendar day (isCalendarDate); the time must lie in 00:00-23:59:59.999 (so T24:00 is not
+ * read as the next day); a zone's offset must be at most 23:59. Anything else (another format, an impossible day or
+ * time, trailing text) is null. `zoned` says whether the value names its zone (then it is an instant).
+ */
+const DATE_VALUE = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-](\d{2}):(\d{2}))?)?$/;
+export function readDateValue(value: string): { day: string; zoned: boolean } | null {
+  const m = DATE_VALUE.exec(value);
+  if (!m || !isCalendarDate(m[1])) return null;
+  const [hh, mm, ss, zh, zm] = [m[2], m[3], m[4], m[6], m[7]].map((x) => (x === undefined ? 0 : Number(x)));
+  if (hh > 23 || mm > 59 || ss > 59 || zh > 23 || zm > 59) return null;
+  return { day: m[1], zoned: m[5] !== undefined };
 }
 
 const ACCENT = "rgb(244,63,94)"; // rose-500
@@ -294,21 +308,20 @@ export function ExpenseFormSideSheet({
     }
     // BUG-028: today in Trinidad (the business's zone), not the UTC date (tomorrow after 20:00 in Port of Spain).
     const dateValue = prefill?.date ?? todayInBusinessZone(new Date(), businessId);
+    // P267 R6 / R7: a prefill's date, read strictly (readDateValue). A value with a zone is an instant: the
+    // business's day of it. With no zone, its written date part (the date the owner wrote; the device's zone never
+    // moves it). Anything else starts on today in the business's zone: new Date would read "2026-02-30" as 2026-03-02
+    // and "12/03/2026" as 3 December, plausible days the owner never saw.
     const prefillDay = (value: string): string => {
-      // P267 R6-1: a value that is neither a calendar day nor a full ISO timestamp starts on today. new Date would read
-      // "2026-02-30" as 2026-03-02 and "12/03/2026" as 3 December: plausible, different days the owner never saw.
-      if (!ISO_TIMESTAMP.test(value)) return todayInBusinessZone(new Date(), businessId);
-      const at = new Date(value);
-      return Number.isNaN(at.getTime()) ? todayInBusinessZone(new Date(), businessId) : dayInZone(at, businessTimeZone(businessId));
+      const read = readDateValue(value);
+      if (!read) return todayInBusinessZone(new Date(), businessId);
+      return read.zoned ? dayInZone(new Date(value), businessTimeZone(businessId)) : read.day;
     };
     return {
       description: prefill?.description ?? "",
       amount: typeof prefill?.amount === "number" ? String(prefill.amount) : "",
       date:
-        // P267 R5-2: only a real day is taken as it comes ("2026-02-30" matches the pattern and is no day).
-        typeof dateValue === "string" && isCalendarDate(dateValue)
-          ? dateValue
-          : prefillDay(String(dateValue)),
+        prefillDay(String(dateValue)),
       vendor: prefill?.vendor ?? "",
       categoryId: "",
       notes: "",
@@ -595,7 +608,9 @@ export function ExpenseFormSideSheet({
           amount: String(inv.total || inv.subtotal || prev.amount),
           vendor: inv.contactName || prev.vendor,
           // P267 R3-1: only a plain date is taken; "12/03/2026" would leave the date input looking empty while held.
-          date: inv.issueDate && isCalendarDate(inv.issueDate.split("T")[0]) ? inv.issueDate.split("T")[0] : prev.date,
+          // P267 R7-4: a receipt's issueDate is a document date: its written date part when the whole value reads
+          // strictly (readDateValue), otherwise the form's date is kept.
+          date: (typeof inv.issueDate === "string" && readDateValue(inv.issueDate)?.day) || prev.date,
         }));
         toast.success(`Receipt extracted (${Math.round((data.confidence || 0) * 100)}% confidence)`);
       } else {
