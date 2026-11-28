@@ -32,6 +32,13 @@
  * it over ("2026-02-30" -> 2026-03-02, then the business's zone -> 2026-03-01): a plausible wrong date the owner never
  * saw. Such a value now starts on today in the business's zone, exactly; pinned with a fixed clock, for the prefill
  * and for the receipt (OCR) path.
+ *
+ * R7 (both reviews of R6): one strict reading of a date value. Its date part must be a calendar day, a time must lie in
+ * 00:00-23:59:59.999, a zone is Z or +-hh:mm.
+ *   - A prefill with a zone is an instant (the business's day of it); with no zone, its written date part (the device's
+ *     zone never moves it); anything else starts on today (R7-1, R7-2, R7-3).
+ *   - A receipt's issueDate is a document date: its written date part when the whole value reads strictly, otherwise
+ *     the form's date is kept (R7-4); pinned from a real prefill date so "kept" and "today" differ (R7-5).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
@@ -469,7 +476,9 @@ describe("P267 R6-1: an impossible prefill date starts on today, never a rolled-
     render(<ExpenseFormSideSheet businessId="biz_A" categories={CATS as never} editingExpense={null} prefill={{ date, description: "Toner", amount: 99, receiptUrl }} onClose={vi.fn()} onSaved={vi.fn()} isCurrentBusiness={() => true} />);
   const date = () => screen.getByLabelText(/^Date/) as HTMLInputElement;
   // R6 (second review): "12/03/2026" (no ISO date at all) was read by new Date as 3 December: the same fallback.
-  for (const impossible of ["2026-02-30", "2026-02-31", "2026-04-31", "2026-02-29", "12/03/2026", "March 12"]) {
+  for (const impossible of ["2026-02-30", "2026-02-31", "2026-04-31", "2026-02-29", "12/03/2026", "March 12",
+    // R7-1: an impossible day inside a full timestamp; R7-3: a time outside the day
+    "2026-02-30T10:00:00Z", "2026-04-31T23:00:00-04:00", "2026-03-12T24:00:00Z", "2026-03-12T10:60:00Z", "2026-03-12Tjunk"]) {
     it(`a prefill of "${impossible}" starts on today in the business's zone (${TODAY_IN_ZONE}), not a rolled-over day`, () => {
       open(impossible);
       expect(date().value, "an impossible date became a different, plausible one").toBe(TODAY_IN_ZONE);
@@ -483,11 +492,45 @@ describe("P267 R6-1: an impossible prefill date starts on today, never a rolled-
     open("2026-03-12T02:30:00Z"); // 22:30 on 11 March in Port of Spain
     expect(date().value).toBe("2026-03-11");
   });
-  it('the receipt (OCR) path: "2026-02-30" from the receipt leaves Date on today in the business\'s zone', async () => {
-    open("2026-02-30", "https://drive.google.com/file/d/abc/view");
-    client.extractReceipt.mockResolvedValue(ok({ invoiceData: { total: 99, issueDate: "2026-02-30", lineItems: [{ description: "Toner" }] }, confidence: 0.9 }));
+  // R7-5: the form starts on a real day that is not today, so "the form's date kept" cannot pass as "today".
+  const DRIVE = "https://drive.google.com/file/d/abc/view";
+  const extract = async (issueDate: string) => {
+    client.extractReceipt.mockResolvedValue(ok({ invoiceData: { total: 99, issueDate, lineItems: [{ description: "Toner" }] }, confidence: 0.9 }));
     fireEvent.click(screen.getAllByRole("button").find((b) => /Extract with AI/.test(b.textContent ?? ""))!);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(date().value).toBe(TODAY_IN_ZONE);
+  };
+  for (const bad of ["2026-02-30", "2026-02-30T10:00:00Z", "2026-03-12Tjunk", "2026-03-12T24:00:00Z", "12/03/2026", "2026-03-12T10:00:00+25:00"]) {
+    it(`R7-4: a receipt's issueDate "${bad}" leaves the form's date (2026-03-10) as it was`, async () => {
+      open("2026-03-10", DRIVE);
+      await extract(bad);
+      expect(date().value, "an unreadable receipt date replaced the form's").toBe("2026-03-10");
+    });
+  }
+  for (const [good, day] of [["2026-03-12", "2026-03-12"], ["2026-03-12T23:30:00-04:00", "2026-03-12"], ["2026-03-12T02:30:00Z", "2026-03-12"], ["2026-03-12T08:15", "2026-03-12"]] as const) {
+    it(`R7-4: a receipt's issueDate "${good}" is a document date: its written date part (${day})`, async () => {
+      open("2026-03-10", DRIVE);
+      await extract(good);
+      expect(date().value).toBe(day);
+    });
+  }
+});
+
+describe("P267 R7-2: a prefill timestamp with no zone keeps its written date, wherever the device is", () => {
+  const original = process.env.TZ;
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-06-15T02:00:00Z")); });
+  afterEach(() => { vi.useRealTimers(); process.env.TZ = original; });
+  const open = (date: string) =>
+    render(<ExpenseFormSideSheet businessId="biz_A" categories={CATS as never} editingExpense={null} prefill={{ date, description: "Toner", amount: 99 }} onClose={vi.fn()} onSaved={vi.fn()} isCurrentBusiness={() => true} />);
+  for (const tz of ["UTC", "Asia/Tokyo", "America/Los_Angeles"]) {
+    it(`"2026-11-05T22:00:00" with the device in ${tz}: 2026-11-05`, () => {
+      process.env.TZ = tz;
+      open("2026-11-05T22:00:00");
+      expect((screen.getByLabelText(/^Date/) as HTMLInputElement).value, `the device's zone (${tz}) moved the written day`).toBe("2026-11-05");
+    });
+  }
+  it("control: a timestamp with a zone is an instant, read in the business's zone, whatever the device's zone", () => {
+    process.env.TZ = "Asia/Tokyo";
+    open("2026-03-12T02:30:00Z"); // 22:30 on 11 March in Port of Spain
+    expect((screen.getByLabelText(/^Date/) as HTMLInputElement).value).toBe("2026-03-11");
   });
 });
