@@ -105,3 +105,26 @@ describe("R6-11: the topmost layer is the one opened last", () => {
     expect(late, "the sheet underneath closed").not.toHaveBeenCalled();
   });
 });
+
+describe("R6-11: BillPayDialog's own Escape is taken only when it is the topmost layer", () => {
+  it("a ConfirmDialog opened over Pay: Escape closes the ConfirmDialog only", async () => {
+    const closePay = vi.fn(), cancel = vi.fn();
+    function PayThenConfirm() {
+      const [confirm, setConfirm] = useState(false);
+      return (
+        <>
+          <BillPayDialog businessId="biz_r6" bill={BILL} onClose={closePay} onPaid={() => {}} isCurrentBusiness={() => true} />
+          <button onClick={() => setConfirm(true)}>Ask over Pay</button>
+          <ConfirmDialog open={confirm} title="Leave?" message="Unsaved." onConfirm={() => {}} onCancel={() => { cancel(); setConfirm(false); }} />
+        </>
+      );
+    }
+    render(<PayThenConfirm />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Ask over Pay" }));
+    await settle();
+    esc();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(closePay, "Pay closed under the dialog opened over it").not.toHaveBeenCalled();
+  });
+});
