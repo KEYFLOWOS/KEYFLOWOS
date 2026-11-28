@@ -473,7 +473,7 @@ export async function exportRevenuePresetPDF(preset: RevenueReportPreset, data: 
   if (!data) return;
   const jsPDFModule = await import("jspdf");
   const jsPDF = jsPDFModule.default;
-  await import("jspdf-autotable");
+  const { autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const { title, headers, rows } = presetToRows(preset, data);
 
@@ -487,20 +487,18 @@ export async function exportRevenuePresetPDF(preset: RevenueReportPreset, data: 
   doc.setTextColor(180, 180, 180);
   doc.text(`Generated ${new Date().toLocaleString()}`, 15, 25);
 
-  type AutoTableDoc = typeof doc & { autoTable?: (opts: Record<string, unknown>) => void };
-  const at = (doc as AutoTableDoc).autoTable?.bind(doc);
-  if (at) {
-    at({
-      startY: 38,
-      head: [headers],
-      body: rows.map((r) => r.map((c) => (typeof c === "number" ? c.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(c)))),
-      margin: { left: 15, right: 15 },
-      styles: { fontSize: 9, cellPadding: 3, textColor: [200, 200, 200], fillColor: [20, 30, 50] },
-      headStyles: { fillColor: [255, 165, 0], textColor: [0, 0, 0], fontStyle: "bold" },
-      alternateRowStyles: { fillColor: [15, 25, 45] },
-      theme: "grid",
-    });
-  }
+  // P306: the named autoTable (jspdf-autotable 5 no longer patches jsPDF on import, so doc.autoTable is undefined).
+  const at = (options: Record<string, unknown>) => autoTable(doc, options as Parameters<typeof autoTable>[1]);
+  at({
+    startY: 38,
+    head: [headers],
+    body: rows.map((r) => r.map((c) => (typeof c === "number" ? c.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(c)))),
+    margin: { left: 15, right: 15 },
+    styles: { fontSize: 9, cellPadding: 3, textColor: [200, 200, 200], fillColor: [20, 30, 50] },
+    headStyles: { fillColor: [255, 165, 0], textColor: [0, 0, 0], fontStyle: "bold" },
+    alternateRowStyles: { fillColor: [15, 25, 45] },
+    theme: "grid",
+  });
 
   doc.save(`Revenue_${preset}_${new Date().toISOString().split("T")[0]}.pdf`);
 }

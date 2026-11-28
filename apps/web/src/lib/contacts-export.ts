@@ -147,7 +147,8 @@ export async function exportToVCard(contacts: LocalContact[], filename = "contac
 
 export async function exportToPDF(contacts: LocalContact[], filename = "contacts.pdf") {
   const { default: JsPDFCtor } = await import("jspdf");
-  await import("jspdf-autotable");
+  // P306: the named autoTable (jspdf-autotable 5 no longer patches jsPDF on import).
+  const { autoTable } = await import("jspdf-autotable");
 
   const doc = new JsPDFCtor({ orientation: "landscape", unit: "mm", format: "a4" });
 
@@ -175,11 +176,7 @@ export async function exportToPDF(contacts: LocalContact[], filename = "contacts
     Array.isArray(c.tags) ? c.tags.join(", ") : "—",
   ]);
 
-  type AutoTableDoc = InstanceType<typeof JsPDFCtor> & {
-    autoTable: (opts: Record<string, unknown>) => void;
-    lastAutoTable?: { finalY?: number };
-  };
-  (doc as AutoTableDoc).autoTable({
+  autoTable(doc, {
     head: [columns],
     body: rows,
     startY: 28,
@@ -276,7 +273,8 @@ export async function exportInsightsReport(metrics: InsightsMetrics, format: Ins
   }
 
   const { default: JsPDFCtor } = await import("jspdf");
-  await import("jspdf-autotable");
+  // P306: the named autoTable (jspdf-autotable 5 no longer patches jsPDF on import).
+  const { autoTable } = await import("jspdf-autotable");
 
   const doc = new JsPDFCtor({ orientation: "portrait", unit: "mm", format: "a4" });
 
@@ -302,11 +300,8 @@ export async function exportInsightsReport(metrics: InsightsMetrics, format: Ins
     ["New This Week", metrics.newThisWeek.toString()],
   ];
 
-  type AutoTableDoc = InstanceType<typeof JsPDFCtor> & {
-    autoTable: (opts: Record<string, unknown>) => void;
-    lastAutoTable?: { finalY?: number };
-  };
-  (doc as AutoTableDoc).autoTable({
+  type AutoTableDoc = InstanceType<typeof JsPDFCtor> & { lastAutoTable?: { finalY?: number } };
+  autoTable(doc, {
     head: [["Metric", "Value"]],
     body: summaryData,
     startY: 34,
@@ -333,7 +328,7 @@ export async function exportInsightsReport(metrics: InsightsMetrics, format: Ins
       formatTTDExport(c.meta?.totalRevenue ?? 0),
     ]);
 
-    (doc as AutoTableDoc).autoTable({
+    autoTable(doc, {
       head: [["#", "Client", "Revenue"]],
       body: revenueRows,
       startY: finalY + 14,

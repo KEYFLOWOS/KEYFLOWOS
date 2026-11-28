@@ -93,7 +93,7 @@ export function exportReportCSV(report: GeneratedReport) {
 export async function exportReportPDF(report: GeneratedReport) {
   const jsPDFModule = await import("jspdf");
   const jsPDF = jsPDFModule.default;
-  await import("jspdf-autotable");
+  const { autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const m = report.metrics;
   const pageW = doc.internal.pageSize.getWidth();
@@ -150,26 +150,22 @@ export async function exportReportPDF(report: GeneratedReport) {
     ["Bookings (Period)", m.bookings.total.toString()],
   ];
 
-  type AutoTableDoc = typeof doc & {
-    autoTable?: (opts: Record<string, unknown>) => void;
-    lastAutoTable?: { finalY: number };
-  };
-  const at = (doc as AutoTableDoc).autoTable?.bind(doc);
-  if (at) {
-    at({
-      startY: y,
-      head: [["Metric", "Value"]],
-      body: metrics,
-      margin: { left: margin, right: margin },
-      styles: { fontSize: 9, cellPadding: 3, textColor: [200, 200, 200], fillColor: [20, 30, 50] },
-      headStyles: { fillColor: [255, 165, 0], textColor: [0, 0, 0], fontStyle: "bold" },
-      alternateRowStyles: { fillColor: [15, 25, 45] },
-      theme: "grid",
-      tableLineColor: [60, 60, 80],
-      tableLineWidth: 0.1,
-    });
-    y = ((doc as AutoTableDoc).lastAutoTable?.finalY ?? y) + 10;
-  }
+  type AutoTableDoc = typeof doc & { lastAutoTable?: { finalY: number } };
+  // P306: the named autoTable (jspdf-autotable 5 no longer patches jsPDF on import, so doc.autoTable is undefined).
+  const at = (options: Record<string, unknown>) => autoTable(doc, options as Parameters<typeof autoTable>[1]);
+  at({
+    startY: y,
+    head: [["Metric", "Value"]],
+    body: metrics,
+    margin: { left: margin, right: margin },
+    styles: { fontSize: 9, cellPadding: 3, textColor: [200, 200, 200], fillColor: [20, 30, 50] },
+    headStyles: { fillColor: [255, 165, 0], textColor: [0, 0, 0], fontStyle: "bold" },
+    alternateRowStyles: { fillColor: [15, 25, 45] },
+    theme: "grid",
+    tableLineColor: [60, 60, 80],
+    tableLineWidth: 0.1,
+  });
+  y = ((doc as AutoTableDoc).lastAutoTable?.finalY ?? y) + 10;
 
   if (m.expenses.byCategory.length > 0) {
     if (y > 240) { doc.addPage(); y = margin; }
@@ -180,7 +176,7 @@ export async function exportReportPDF(report: GeneratedReport) {
     doc.text("Expense Breakdown by Category", margin, y);
     y += 7;
 
-    at?.({
+    at({
       startY: y,
       head: [["Category", "Amount", "Count"]],
       body: m.expenses.byCategory.map(c => [c.category, formatCurrency(c.total, m.currency), c.count.toString()]),
@@ -204,7 +200,7 @@ export async function exportReportPDF(report: GeneratedReport) {
     doc.text("Top Revenue Clients", margin, y);
     y += 7;
 
-    at?.({
+    at({
       startY: y,
       head: [["Client", "Revenue"]],
       body: m.revenue.topClients.map(c => [c.name, formatCurrency(c.total, m.currency)]),
