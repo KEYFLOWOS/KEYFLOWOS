@@ -15,7 +15,7 @@
  * The blur Chromium fires on a removed focused node is reproduced as in side-sheet-p274.test.tsx (jsdom fires none).
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() }) }));
@@ -144,10 +144,10 @@ describe("R6-2: focus outside the sheet when it flips, <body> included, is left 
 describe("R6-3: a child's own change in the flip's commit is not hidden", () => {
   it("a focused field the child removes on the phone layout is told it lost focus", async () => {
     let blurs = 0;
+    const onBlur = () => { blurs++; };
     function DesktopOnly() {
       const isMobile = useIsMobile();
       const ref = useRef<HTMLInputElement>(null);
-      const onBlur = useRef(() => { blurs++; }).current;
       return isMobile ? <p>phone</p> : <DesktopField fieldRef={ref} onBlur={onBlur} />;
     }
     function DesktopField({ fieldRef, onBlur }: { fieldRef: { current: HTMLInputElement | null }; onBlur: () => void }) {
@@ -164,11 +164,11 @@ describe("R6-3: a child's own change in the flip's commit is not hidden", () => 
   });
   it("focus a child moves to another field in the flip's commit stays there; each field hears its own event", async () => {
     const seen = { aBlurs: 0, aReactBlurs: 0, bFocuses: 0 };
+    const onBlur = () => { seen.aBlurs++; };
     function MovesFocus() {
       const isMobile = useIsMobile();
       const a = useRef<HTMLInputElement>(null);
       const b = useRef<HTMLInputElement>(null);
-      const onBlur = useRef(() => { seen.aBlurs++; }).current;
       useNativeBlurs(a, onBlur);
       useLayoutEffect(() => { if (isMobile) b.current?.focus(); }, [isMobile]);
       return (
