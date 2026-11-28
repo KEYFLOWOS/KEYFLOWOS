@@ -178,7 +178,7 @@ describe("P274-2: the footer is not remounted by a flip", () => {
 
 describe("P274-2 with P273-1: the footer is the footer's, not the shell's", () => {
   const headerClose = () => screen.getAllByRole("button", { name: "Close" }).find((b) => !b.hasAttribute("data-footer"));
-  it("a footer 'Close' focused, then removed, then a flip: the panel is focused, not the header's Close", async () => {
+  it("a footer 'Close' focused, then removed, then a flip: the header's Close is not focused (focus stays on <body>)", async () => {
     const el = (show: boolean) => (
       <SideSheet open onClose={() => {}} title="Edit Expense" footer={show ? <button aria-label="Close" data-footer="" /> : <span>done</span>}>
         <p>body</p>
@@ -191,7 +191,7 @@ describe("P274-2 with P273-1: the footer is the footer's, not the shell's", () =
     await settle();
     await flip(true);
     expect(document.activeElement, "focus was given to the header's Close, a control the user never focused").not.toBe(headerClose());
-    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    expect(document.activeElement, "R6-2: focus on <body> is left alone by the flip").toBe(document.body);
   });
   it("the header's Close focused, with a footer 'Close' too: the new shell's header Close is focused", async () => {
     render(<SideSheet open onClose={() => {}} title="Edit Expense" footer={<button aria-label="Close" data-footer="" />}><p>body</p></SideSheet>);
@@ -345,6 +345,8 @@ describe("P274-5: a closed or unmounted sheet's containers hold nothing of it", 
 });
 
 describe("P274-5 control: StrictMode", () => {
+  // next.config.ts sets reactStrictMode: isProd, so the app's dev server never runs StrictMode's double mount (and a
+  // production build does not double-invoke): this spec renders <StrictMode> itself to cover it.
   it("under StrictMode (its effects and refs run twice on mount) the children and the footer are in the open sheet, and a flip keeps them", async () => {
     render(<StrictMode><SideSheet open onClose={() => {}} title="Edit Expense" footer={<button>Save</button>}><p>body</p></SideSheet></StrictMode>);
     await settle();

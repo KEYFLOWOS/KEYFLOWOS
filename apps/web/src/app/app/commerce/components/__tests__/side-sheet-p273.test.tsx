@@ -1,8 +1,9 @@
 /**
  * P263 R5, board row P273 (D-331: every NIT fixed before merge).
  *   P273-1  a child focused and then removed before a flip is not stood in for by a shell control with the same label
- *           (the header's Close): only a control that was in the shell when it was focused is matched in the new shell;
- *           otherwise the panel takes focus.
+ *           (the header's Close): only a control that was in the shell when it was focused is matched in the new shell.
+ *           R6-2: focus had already fallen to <body> when the child was removed, and focus outside the sheet, <body>
+ *           included, is left alone by a flip (these pins said the panel took focus before R6).
  *   P273-2  the title's id is the sheet's own (useId): two open sheets with the same title do not share it, and each
  *           dialog is labelled by its own heading.
  */
@@ -47,7 +48,7 @@ describe("P273-1: a removed child is not stood in for by a shell control", () =>
       </SideSheet>
     );
   }
-  it("a child 'Close' focused, then removed, then a flip: the panel is focused, not the header's Close", async () => {
+  it("a child 'Close' focused, then removed, then a flip: the header's Close is not focused (focus stays on <body>)", async () => {
     const view = render(<Sheet showChildClose />);
     await settle();
     (document.querySelector("button[data-child]") as HTMLElement).focus();
@@ -55,7 +56,7 @@ describe("P273-1: a removed child is not stood in for by a shell control", () =>
     await settle();
     await flip(true);
     expect(document.activeElement, "focus was given to the header's Close, a control the user never focused").not.toBe(headerClose());
-    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    expect(document.activeElement, "R6-2: focus on <body> is left alone by the flip").toBe(document.body);
   });
   it("a child 'Save' focused, then removed, then a flip: the footer's Save is not focused", async () => {
     function WithChildSave({ show }: { show: boolean }) {
@@ -71,7 +72,7 @@ describe("P273-1: a removed child is not stood in for by a shell control", () =>
     view.rerender(<WithChildSave show={false} />);
     await settle();
     await flip(true);
-    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    expect(document.activeElement, "the footer's Save was focused, or <body> was not left alone").toBe(document.body);
   });
   it("control: the header's Close focused is still the new shell's Close after the flip", async () => {
     render(<Sheet showChildClose={false} />);

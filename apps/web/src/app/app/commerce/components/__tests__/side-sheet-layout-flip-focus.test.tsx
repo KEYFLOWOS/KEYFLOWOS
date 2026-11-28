@@ -257,19 +257,17 @@ describe("P263 R1: matching the focused control in the remounted panel", () => {
     await flip(true);
     expect(document.activeElement, "focus fell to <body> on a disabled control").toBe(screen.getByRole("dialog"));
   });
-  it("R1-5: the focusin listener is removed when the sheet closes", async () => {
+  it("R1-5 (R6-1): no focusin listener at all: what has focus is read when the shell is swapped", async () => {
+    // R1-5 pinned that the focusin listener went away on close; since R6-1 the sheet keeps no focus record (it reads
+    // document.activeElement with the old shell in place), so it adds no focusin listener, open or closed.
     const add = vi.spyOn(document, "addEventListener");
-    const remove = vi.spyOn(document, "removeEventListener");
     const el = (open: boolean) => <SideSheet open={open} onClose={() => {}} title="Edit Expense"><p>body</p></SideSheet>;
     const view = render(el(true));
     await settle();
-    const listener = add.mock.calls.find((c) => c[0] === "focusin")?.[1];
-    expect(listener, "no focusin listener added while open").toBeTruthy();
     view.rerender(el(false));
     await settle();
-    expect(remove.mock.calls.some((c) => c[0] === "focusin" && c[1] === listener), "the focusin listener outlived the open sheet").toBe(true);
+    expect(add.mock.calls.filter((c) => c[0] === "focusin"), "a focusin listener was added").toEqual([]);
     add.mockRestore();
-    remove.mockRestore();
   });
   it("R1-6: a refocused text field keeps its caret and selection", async () => {
     render(<Sheet />);
