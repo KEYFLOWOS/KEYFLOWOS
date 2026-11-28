@@ -210,6 +210,11 @@ export function ContactSelect({
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Escape") {
+        // P263 R6-5: an Escape that closes the open list is the list's: a sheet or dialog around it stays open
+        if (open) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         setOpen(false);
         setShowQuickAdd(false);
         clearQuickAddError();

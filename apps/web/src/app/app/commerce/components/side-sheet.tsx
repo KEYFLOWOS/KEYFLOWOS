@@ -59,7 +59,9 @@ function useTopmostEscape(open: boolean, overlayRef: { current: HTMLElement | nu
     const overlay = overlayRef.current;
     if (overlay) openOverlays.add(overlay);
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && overlay && isTopmost(overlay)) close();
+      // R6-5: an Escape a layer inside the sheet already handled (it prevented the default, as Radix's layers and
+      // ContactSelect's list do) is not also the sheet's
+      if (e.key === "Escape" && !e.defaultPrevented && overlay && isTopmost(overlay)) close();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -157,6 +159,7 @@ export function SideSheet({
   useEffect(() => {
     if (!open) return;
     if (!previousFocusRef.current) previousFocusRef.current = document.activeElement as HTMLElement | null; // reopened mid-exit
+    const overlay = overlayRef.current;
     const frame = requestAnimationFrame(() => {
       const panel = panelRef.current;
       if (panel && !panel.contains(document.activeElement)) panel.focus();
@@ -165,7 +168,11 @@ export function SideSheet({
       cancelAnimationFrame(frame);
       const back = previousFocusRef.current;
       previousFocusRef.current = null;
-      back?.focus();
+      if (back?.isConnected) back.focus();
+      // R6-4: the opener is gone (or cannot take focus): nothing of the exiting sheet keeps focus, or keys, while it
+      // animates out; focus goes to <body>
+      const active = document.activeElement as HTMLElement | null;
+      if (overlay && active && overlay.contains(active)) active.blur();
     };
   }, [open]);
 
@@ -174,12 +181,15 @@ export function SideSheet({
   // through a portal, into a container this sheet owns, and the container is moved into the current shell's slot. On
   // a flip the same nodes, with their focus target, caret, typed values and component state, are carried over.
   // Removing the old shell drops the focus of a node in it, so the node focused before the flip is focused again
-  // (exactly that node; no matching), and its caret and selection are put back. P274-1: the flip is not a blur: the
-  // blur that removal fires (Chromium) and the focus that the refocus fires are swallowed, so neither the node's own
-  // listeners nor React's onBlur and onFocus see them (a child's popover that closes on blur stays open). If the node
-  // cannot be focused again (it became disabled), it is told that it lost focus. The header's Close is focused in the
-  // new shell when one stands for it (P273-1: only if it was the shell's when it was focused), otherwise the panel
-  // is. Focus outside the sheet is left alone.
+  // (exactly that node; no matching), and its caret and selection are put back. What has focus is read when the
+  // shell is swapped, with the old shell still in place (R6-1: a sheet mounted open on a phone flips right after it
+  // mounts, and a child's autoFocus or mount-effect focus is kept through that flip). P274-1: the flip is not a blur:
+  // the blur that removal fires (Chromium) and the focus that the refocus fires are swallowed, so neither the node's
+  // own listeners nor React's onBlur and onFocus see them (a child's popover that closes on blur stays open). R6-3:
+  // focus is put back only if the swap left it on <body> or the panel (a child that moved it elsewhere in the same
+  // commit keeps its choice), and a node that ends without focus (removed, disabled, or left by the child) is told it
+  // lost focus. The header's Close is focused in the new shell when one stands for it (P273-1: only if it was the
+  // shell's), otherwise the panel is. R6-2: focus outside the sheet when it flips, <body> included, is left alone.
   // The containers are made once, on the client only (the server has no document). The portals sit inside the
   // overlay, after the keyed panel: the overlay is not remounted by a flip, so in the React tree the children stay
   // under the sheet (R4): they read the sheet's own presence (a child's exit runs when the sheet closes; a caller's
@@ -188,50 +198,39 @@ export function SideSheet({
   // finds itself in the document on mount. The portals are rendered only once mounted on the client: a sheet rendered
   // open on the server has empty slots there, and hydrates to the same before the children are put in (R4-3).
   // P274-5: once the sheet has closed (its exit done) or unmounted, the containers are taken out of the old shell, so
-  // nothing of it stays reachable from them. A sheet reopened during its exit is not reported as exit-complete
+  // nothing of it stays reachable from them. The containers themselves (empty) can stay reachable after an unmount
+  // through framer-motion's reference to the props of the last motion element it rendered (the slots' refs); the
+  // event listeners on each (about 139) are React DOM's own, set up on every portal container. A sheet reopened during its exit is not reported as exit-complete
   // (framer-motion cancels that exit; pinned by R3's "reopened while it is still animating out").
   const [content] = useState<HTMLDivElement | null>(() => (typeof document === "undefined" ? null : document.createElement("div")));
   const [footerContent] = useState<HTMLDivElement | null>(() => (typeof document === "undefined" ? null : document.createElement("div")));
   const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false);
   /**
-   * Set before the shell is swapped: what had focus (the old shell is still in place), whether it was a control of the
-   * shell itself when it was focused, whether it had focus at that moment (so its removal blur is swallowed), its
-   * caret, and the release of that swallowing.
+   * Set before the shell is swapped, with the old shell still in place: the node in the sheet that has focus, whether
+   * it is the panel itself or a control of the shell (not among the children or the footer), its caret, and the
+   * release of the swallowing of its removal blur.
    */
   const movedRef = useRef<{
-    last: HTMLElement | null;
+    last: HTMLElement;
+    wasPanel: boolean;
     inShell: boolean;
-    hadFocus: boolean;
     selection: [number, number] | null;
     release: () => void;
   } | null>(null);
-  // R2-4: a focus change only records the focused node (O(1)); nothing is read from the panel until a flip. P273-1:
-  // and whether it is the shell's own control (in the panel, not among the children or the footer), read while it is
-  // in place.
-  const focusedRef = useRef<{ el: HTMLElement; inShell: boolean } | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onFocusIn = (e: FocusEvent) => {
-      const el = e.target as HTMLElement | null;
-      const panel = panelRef.current;
-      focusedRef.current = el && panel && panel.contains(el)
-        ? { el, inShell: !content?.contains(el) && !footerContent?.contains(el) }
-        : null;
-    };
-    document.addEventListener("focusin", onFocusIn);
-    return () => {
-      document.removeEventListener("focusin", onFocusIn);
-      // and no detached subtree stays referenced once the sheet is closed
-      focusedRef.current = null;
-    };
-  }, [open, content, footerContent]);
   const beforeSwap = useCallback(() => {
-    const last = focusedRef.current?.el ?? null;
-    const hadFocus = !!last && document.activeElement === last;
-    // released by the layout effect of this same commit (a commit is not interrupted between the two)
-    const release = hadFocus ? swallowFocusEvents(last, BLUR_EVENTS) : () => {};
-    movedRef.current = { last, inShell: !!focusedRef.current?.inShell, hadFocus, selection: last ? selectionOf(last) : null, release };
-  }, []);
+    const panel = panelRef.current;
+    const active = document.activeElement as HTMLElement | null;
+    // R6-1, R6-2: read now, not from a record of focus events (none is kept): focus outside the sheet is not moved
+    if (!panel || !active || !panel.contains(active)) { movedRef.current = null; return; }
+    movedRef.current = {
+      last: active,
+      wasPanel: active === panel,
+      inShell: !content?.contains(active) && !footerContent?.contains(active),
+      selection: selectionOf(active),
+      // released by the layout effect of this same commit (a commit is not interrupted between the two)
+      release: swallowFocusEvents(active, BLUR_EVENTS),
+    };
+  }, [content, footerContent]);
   const attachSlot = useCallback((slot: HTMLDivElement | null) => {
     if (slot && content && content.parentNode !== slot) slot.appendChild(content);
   }, [content]);
@@ -243,20 +242,26 @@ export function SideSheet({
     movedRef.current = null;
     if (!moved) return;
     moved.release();
-    const { last, inShell, hadFocus, selection } = moved;
+    const { last, wasPanel, inShell, selection } = moved;
     const panel = panelRef.current;
-    if (!open || !content || !last || !panel || document.activeElement === last) return;
-    const kept = content.contains(last) || !!footerContent?.contains(last);
-    if (kept) {
-      const releaseFocus = hadFocus ? swallowFocusEvents(last, FOCUS_EVENTS) : () => {};
-      try { last.focus(); } finally { releaseFocus(); }
-    } else if (inShell && last !== panel && !last.isConnected) {
-      shellCounterpart(last, panel, [content, footerContent])?.focus();
+    if (!open || !content || !panel) return;
+    const active = document.activeElement;
+    // R6-3: only if the swap left focus on <body> or the panel; a child that moved it in this commit keeps its choice
+    if (active !== last && (!active || active === document.body || active === panel)) {
+      if (content.contains(last) || footerContent?.contains(last)) {
+        const releaseFocus = swallowFocusEvents(last, FOCUS_EVENTS);
+        try { last.focus(); } finally { releaseFocus(); }
+      } else if (wasPanel) {
+        panel.focus();
+      } else if (inShell && !last.isConnected) {
+        shellCounterpart(last, panel, [content, footerContent])?.focus();
+      }
+      // A control that cannot take focus now (disabled, or removed by its child) leaves focus on <body>: the panel
+      // takes it (P263 R1-4, R6-1).
+      if (!panel.contains(document.activeElement)) panel.focus();
     }
-    // A control that cannot take focus now (disabled) leaves focus on <body>: the panel takes it (P263 R1-4).
-    if (!panel.contains(document.activeElement)) panel.focus();
-    if (kept && hadFocus && document.activeElement !== last) {
-      // its removal blur was swallowed, and it did not get focus back: it is told it lost focus (React hears this one)
+    if (document.activeElement !== last) {
+      // its removal blur was swallowed, and it does not have focus now: it is told it lost focus (React hears this one)
       const relatedTarget = document.activeElement;
       last.dispatchEvent(new FocusEvent("blur", { relatedTarget }));
       last.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget }));
@@ -264,7 +269,7 @@ export function SideSheet({
     }
     // The caret is put back explicitly: in Chromium focus() keeps an input's caret, so this is equivalent there (the
     // jsdom mutant survives for the same reason); WebKit and Firefox may move it on focus, so it is kept for them.
-    if (selection && document.activeElement === last && (last instanceof HTMLInputElement || last instanceof HTMLTextAreaElement)) {
+    if (selection && (last instanceof HTMLInputElement || last instanceof HTMLTextAreaElement)) {
       try { last.setSelectionRange(selection[0], selection[1]); } catch { /* a type with no selection */ }
     }
   }); // every commit: the swap is handled in the commit that made it
